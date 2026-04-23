@@ -1,0 +1,62 @@
+from fastapi import HTTPException, status
+
+from app.config import settings
+from app.db import Database
+from app.tx.schemas import AcceptRidePrepRequest, AcceptRidePrepResponse
+
+
+class TxService:
+    def __init__(self, db: Database) -> None:
+        self.db = db
+
+    async def prepare_accept_ride(self, rider_wallet: str, payload: AcceptRidePrepRequest) -> AcceptRidePrepResponse:
+        if not self.db.pool:
+            raise RuntimeError("Database is not connected")
+
+        rider_wallet = rider_wallet.lower()
+
+        async with self.db.pool.acquire() as connection:
+            ride = await connection.fetchrow("SELECT * FROM ride_requests WHERE id = $1", payload.rideId)
+            if not ride:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ride not found")
+            if ride["rider_wallet"] != rider_wallet:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only ride owner can prepare acceptRide")
+            if ride["status"] != "DRIVER_SELECTED":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Ride must be in DRIVER_SELECTED state before acceptRide prep",
+                )
+
+            selected_offer = await connection.fetchrow(
+                """
+                SELECT * FROM driver_offers
+                WHERE ride_request_id = $1 AND status = 'SELECTED'
+                LIMIT 1
+                """,
+                payload.rideId,
+            )
+            if not selected_offer:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No selected offer found")
+
+        driver_wallet = str(selected_offer["driver_wallet"]).lower()
+        fare_wei = int(selected_offer["quoted_fare_wei"])
+        ceiling_bond_wei = 0
+        if payload.ceilingEnabled:
+            ceiling_bond_wei = int(fare_wei * (settings.ceiling_bond_percent / 100))
+        required_msg_value_wei = fare_wei + ceiling_bond_wei
+
+        return AcceptRidePrepResponse(
+            contractAddress=settings.carpool_contract_address,
+            functionName="acceptRide",
+            riderWallet=rider_wallet,
+            driverWallet=driver_wallet,
+            fareWei=str(fare_wei),
+            ceilingEnabled=payload.ceilingEnabled,
+            ceilingBondWei=str(ceiling_bond_wei),
+            requiredMsgValueWei=str(required_msg_value_wei),
+            driverSignature=payload.driverSignature,
+            rideId=payload.rideId,
+            chainId=payload.chainId,
+            driverNonce=payload.driverNonce,
+        )
+

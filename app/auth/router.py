@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
-from app.auth.schemas import MeResponse, NonceRequest, NonceResponse, VerifyRequest, VerifyResponse
+from app.auth.schemas import LogoutResponse, MeResponse, NonceRequest, NonceResponse, VerifyRequest, VerifyResponse
 from app.auth.service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -32,4 +32,16 @@ async def me(
     token = authorization.split(" ", 1)[1]
     wallet = auth_service.read_wallet_from_token(token)
     return MeResponse(wallet=wallet)
+
+
+@router.post("/logout", response_model=LogoutResponse)
+async def logout(
+    authorization: str | None = Header(default=None),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> LogoutResponse:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
+    token = authorization.split(" ", 1)[1]
+    await auth_service.revoke_session(token)
+    return LogoutResponse()
 

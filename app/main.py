@@ -4,7 +4,11 @@ from fastapi import FastAPI
 
 from app.auth.router import router as auth_router
 from app.auth.service import AuthService
+from app.chain_sync.router import router as chain_sync_router
+from app.chain_sync.service import ChainSyncService
 from app.db import Database
+from app.location.router import router as location_router
+from app.location.service import LocationService
 from app.marketplace.router import router as marketplace_router
 from app.marketplace.service import MarketplaceService
 from app.maps.router import router as maps_router
@@ -30,6 +34,8 @@ def create_app(init_db: bool = True) -> FastAPI:
         app.state.marketplace_service = MarketplaceService(database)
         app.state.tx_service = TxService(database)
         app.state.treasury_service = TreasurySignerService(database)
+        app.state.chain_sync_service = ChainSyncService(database)
+        app.state.location_service = LocationService(database)
         yield
         if init_db:
             await database.close()
@@ -41,6 +47,8 @@ def create_app(init_db: bool = True) -> FastAPI:
     app.include_router(pricing_router, prefix="/api/v1")
     app.include_router(treasury_router, prefix="/api/v1")
     app.include_router(tx_router, prefix="/api/v1")
+    app.include_router(chain_sync_router, prefix="/api/v1")
+    app.include_router(location_router, prefix="/api/v1")
     return app
 
 

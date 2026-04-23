@@ -23,3 +23,21 @@ class AcceptRidePrepResponse(BaseModel):
     chainId: int | None
     driverNonce: int | None
 
+
+class TxRecordCreateRequest(BaseModel):
+    txHash: str
+    chainId: int = Field(ge=1)
+    action: str
+    rideRequestId: str | None = None
+    status: str = "submitted"
+
+
+class TxRecordResponse(BaseModel):
+    txHash: str
+    chainId: int
+    action: str
+    rideRequestId: str | None = None
+    status: str
+    blockNumber: int | None = None
+    confirmedAt: str | None = None
+

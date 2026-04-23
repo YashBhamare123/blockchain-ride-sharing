@@ -38,6 +38,14 @@ class Database:
                     PRIMARY KEY (wallet_address, nonce)
                 );
 
+                CREATE TABLE IF NOT EXISTS sessions (
+                    jwt_id TEXT PRIMARY KEY,
+                    wallet_address TEXT NOT NULL REFERENCES users(wallet_address) ON DELETE CASCADE,
+                    issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    revoked BOOLEAN NOT NULL DEFAULT FALSE
+                );
+
                 CREATE TABLE IF NOT EXISTS drivers (
                     wallet_address TEXT PRIMARY KEY REFERENCES users(wallet_address) ON DELETE CASCADE,
                     availability TEXT NOT NULL DEFAULT 'offline',
@@ -103,6 +111,27 @@ class Database:
                     confirmed_at TIMESTAMPTZ,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
+
+                CREATE TABLE IF NOT EXISTS chain_events (
+                    id BIGSERIAL PRIMARY KEY,
+                    tx_hash TEXT NOT NULL,
+                    log_index INTEGER NOT NULL DEFAULT 0,
+                    event_name TEXT NOT NULL,
+                    chain_id INTEGER NOT NULL,
+                    ride_request_id TEXT,
+                    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE(tx_hash, log_index, event_name)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_ride_requests_status_created_at
+                    ON ride_requests(status, created_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_driver_offers_ride_request_status
+                    ON driver_offers(ride_request_id, status);
+
+                CREATE INDEX IF NOT EXISTS idx_tx_records_status_created_at
+                    ON tx_records(status, created_at DESC);
                 """
             )
 

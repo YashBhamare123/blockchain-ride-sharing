@@ -24,3 +24,7 @@ class VerifyResponse(BaseModel):
 class MeResponse(BaseModel):
     wallet: str
 
+
+class LogoutResponse(BaseModel):
+    success: bool = True
+

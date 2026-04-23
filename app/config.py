@@ -26,6 +26,7 @@ class Settings:
             "0x0000000000000000000000000000000000000000",
         )
         self.treasury_private_key = os.getenv("TREASURY_PRIVATE_KEY", "")
+        self.chain_rpc_url = os.getenv("CHAIN_RPC_URL", "")
 
 
 settings = Settings()

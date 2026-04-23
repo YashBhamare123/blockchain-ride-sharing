@@ -224,6 +224,43 @@ Design principle:
 
 24. `GET /tx/{tx_hash}`
 - Purpose: tx status for frontend confirmation UX.
+### F.1) Chain sync integration examples
+Sample webhook payload (`POST /api/v1/webhooks/chain-events`):
+{
+  "events": [
+    {
+      "eventName": "RideAccepted",
+      "txHash": "0xabc123...",
+      "chainId": 11155111,
+      "rideRequestId": "f1968d8c-7fcb-48d6-a7e1-5f2b5c7d3c95",
+      "blockNumber": 1234567,
+      "logIndex": 0,
+      "fromWallet": "0x1111111111111111111111111111111111111111",
+      "driverWallet": "0x2222222222222222222222222222222222222222",
+      "status": "confirmed",
+      "action": "acceptRide",
+      "payload": {
+        "onChainRideId": 5,
+        "fareWei": "900000000000000"
+      }
+    }
+  ]
+}
+Frontend tx status polling sequence (`GET /api/v1/tx/{tx_hash}`):
+1. Frontend submits a wallet tx and stores `txHash`.
+2. Poll every 2-3 seconds for up to ~90 seconds.
+3. Stop polling when `status` is `confirmed` or `failed`.
+4. If timeout occurs, keep ride UI in a recoverable pending state and allow manual refresh.
+Expected tx status response shape:
+{
+  "txHash": "0xabc123...",
+  "status": "confirmed",
+  "chainId": 11155111,
+  "action": "RideAccepted",
+  "rideRequestId": "f1968d8c-7fcb-48d6-a7e1-5f2b5c7d3c95",
+  "blockNumber": 1234567,
+  "confirmedAt": "2026-04-23T11:15:00.123456+00:00"
+}
 ## 7) Core user flows (MVP)
 ## Flow A: Rider creates request and chooses driver
 1. Rider logs in via wallet signature.
@@ -290,3 +327,40 @@ For multi-driver acceptance product behavior:
 - Keep multiple offers off-chain.
 - Commit only chosen driver and chosen fare to on-chain `acceptRide`.
 - Treat blockchain event as source of truth after tx confirmation.
+## 12) Implemented backend status (post-build update)
+Implemented modules:
+- Auth (nonce/verify/me/logout) with persisted sessions (`sessions` table).
+- Maps (autocomplete, place details, route estimate).
+- Pricing (fare, tip, ceiling bond, required msg value).
+- Marketplace (ride creation, offer flow, driver selection).
+- Tx prep (`acceptRide`) + tx record persistence (`/tx/record`).
+- Treasury signer (`/rides/{ride_id}/complete/sign`).
+- Chain sync (`/webhooks/chain-events`, `/tx/{tx_hash}`).
+- Location stream REST endpoints (`/rides/{ride_id}/locations`, `/rides/{ride_id}/locations/latest`).
+Database layer now actively used:
+- `users`, `auth_nonces`, `sessions`
+- `ride_requests`, `driver_offers`, `ride_locations`
+- `tx_records`, `chain_events`
+Additional DB indexes added:
+- `idx_ride_requests_status_created_at`
+- `idx_driver_offers_ride_request_status`
+- `idx_tx_records_status_created_at`
+Environment variables now used by backend:
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `GOOGLE_MAPS_API_KEY`
+- `GOOGLE_MAPS_DEFAULT_COUNTRY`
+- `GOOGLE_MAPS_TIMEOUT_SECONDS`
+- `BASE_FARE_WEI`
+- `PER_KM_RATE_WEI`
+- `PER_MIN_RATE_WEI`
+- `SERVICE_FEE_PERCENT`
+- `MIN_FARE_WEI`
+- `SURGE_MULTIPLIER`
+- `CEILING_BOND_PERCENT`
+- `CARPOOL_CONTRACT_ADDRESS`
+- `TREASURY_PRIVATE_KEY`
+- `CHAIN_RPC_URL`
+Current non-implemented optional items:
+- WebSocket push channel (`/ws/rides/{ride_id}`).
+- Tx-prep endpoints beyond `acceptRide` (`startRide`, `cancelRide`, `rateDriver`, etc.).

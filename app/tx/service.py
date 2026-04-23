@@ -2,7 +2,7 @@ from fastapi import HTTPException, status
 
 from app.config import settings
 from app.db import Database
-from app.tx.schemas import AcceptRidePrepRequest, AcceptRidePrepResponse
+from app.tx.schemas import AcceptRidePrepRequest, AcceptRidePrepResponse, TxRecordCreateRequest, TxRecordResponse
 
 
 class TxService:
@@ -58,5 +58,51 @@ class TxService:
             rideId=payload.rideId,
             chainId=payload.chainId,
             driverNonce=payload.driverNonce,
+        )
+
+    async def record_tx(self, wallet: str, payload: TxRecordCreateRequest) -> TxRecordResponse:
+        if not self.db.pool:
+            raise RuntimeError("Database is not connected")
+
+        normalized_hash = payload.txHash.lower()
+        normalized_wallet = wallet.lower()
+        confirmed_at = None
+        if payload.status == "confirmed":
+            from datetime import UTC, datetime
+
+            confirmed_at = datetime.now(UTC)
+
+        async with self.db.pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """
+                INSERT INTO tx_records(ride_request_id, action, tx_hash, chain_id, from_wallet, status, confirmed_at)
+                VALUES($1,$2,$3,$4,$5,$6,$7)
+                ON CONFLICT (tx_hash)
+                DO UPDATE SET
+                    ride_request_id = COALESCE(EXCLUDED.ride_request_id, tx_records.ride_request_id),
+                    action = EXCLUDED.action,
+                    chain_id = EXCLUDED.chain_id,
+                    from_wallet = EXCLUDED.from_wallet,
+                    status = EXCLUDED.status,
+                    confirmed_at = COALESCE(EXCLUDED.confirmed_at, tx_records.confirmed_at)
+                RETURNING *
+                """,
+                payload.rideRequestId,
+                payload.action,
+                normalized_hash,
+                payload.chainId,
+                normalized_wallet,
+                payload.status,
+                confirmed_at,
+            )
+
+        return TxRecordResponse(
+            txHash=row["tx_hash"],
+            chainId=row["chain_id"],
+            action=row["action"],
+            rideRequestId=row["ride_request_id"],
+            status=row["status"],
+            blockNumber=row["block_number"],
+            confirmedAt=row["confirmed_at"].isoformat() if row["confirmed_at"] else None,
         )
 

@@ -41,6 +41,16 @@ def create_app(init_db: bool = True) -> FastAPI:
             await database.close()
 
     app = FastAPI(title="Ride Sharing Backend", lifespan=lifespan)
+
+    from fastapi.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Allows all origins for local testing. Adjust in production!
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(marketplace_router, prefix="/api/v1")
     app.include_router(maps_router, prefix="/api/v1")

@@ -40,9 +40,26 @@ class TxService:
 
         driver_wallet = str(selected_offer["driver_wallet"]).lower()
         fare_wei = int(selected_offer["quoted_fare_wei"])
+
+        # Source of truth is what the driver actually signed at offer submission.
+        # Fall back to the request payload only if the offer row is missing those values.
+        offer_keys = set(selected_offer.keys())
+        stored_sig = selected_offer["driver_signature"] if "driver_signature" in offer_keys else None
+        stored_nonce = selected_offer["driver_nonce"] if "driver_nonce" in offer_keys else None
+        stored_ceiling = selected_offer["ceiling_enabled"] if "ceiling_enabled" in offer_keys else None
+
+        driver_signature = stored_sig or payload.driverSignature
+        if stored_nonce is not None:
+            driver_nonce = int(stored_nonce)
+        else:
+            driver_nonce = payload.driverNonce
+        ceiling_enabled = bool(stored_ceiling) if stored_ceiling is not None else payload.ceilingEnabled
+
+        # Contract does integer math: fare * BOND / 100.
+        bond_percent_int = int(settings.ceiling_bond_percent)
         ceiling_bond_wei = 0
-        if payload.ceilingEnabled:
-            ceiling_bond_wei = int(fare_wei * (settings.ceiling_bond_percent / 100))
+        if ceiling_enabled:
+            ceiling_bond_wei = fare_wei * bond_percent_int // 100
         required_msg_value_wei = fare_wei + ceiling_bond_wei
 
         return AcceptRidePrepResponse(
@@ -51,13 +68,13 @@ class TxService:
             riderWallet=rider_wallet,
             driverWallet=driver_wallet,
             fareWei=str(fare_wei),
-            ceilingEnabled=payload.ceilingEnabled,
+            ceilingEnabled=ceiling_enabled,
             ceilingBondWei=str(ceiling_bond_wei),
             requiredMsgValueWei=str(required_msg_value_wei),
-            driverSignature=payload.driverSignature,
+            driverSignature=driver_signature,
             rideId=payload.rideId,
             chainId=payload.chainId,
-            driverNonce=payload.driverNonce,
+            driverNonce=driver_nonce,
         )
 
     async def record_tx(self, wallet: str, payload: TxRecordCreateRequest) -> TxRecordResponse:

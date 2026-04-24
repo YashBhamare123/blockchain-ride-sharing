@@ -36,10 +36,26 @@ class TreasurySignerService:
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Only rider or selected driver can request completion signature",
                 )
+            selected_offer = await connection.fetchrow(
+                """
+                SELECT quoted_fare_wei
+                FROM driver_offers
+                WHERE ride_request_id = $1 AND status = 'SELECTED'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                ride_id,
+            )
+            if not selected_offer:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No selected offer found for final fare",
+                )
+            final_fare_wei = int(selected_offer["quoted_fare_wei"])
 
         message_hash = _build_complete_hash(
             on_chain_ride_id=payload.onChainRideId,
-            final_fare_wei=int(payload.finalFareWei),
+            final_fare_wei=final_fare_wei,
             rider_wallet=rider_wallet,
             driver_wallet=driver_wallet,
             chain_id=payload.chainId,
@@ -49,7 +65,7 @@ class TreasurySignerService:
         return CompleteRideSignResponse(
             treasurySignature=signed.signature.to_0x_hex(),
             onChainRideId=payload.onChainRideId,
-            finalFareWei=payload.finalFareWei,
+            finalFareWei=str(final_fare_wei),
             riderWallet=rider_wallet,
             driverWallet=driver_wallet,
             chainId=payload.chainId,
@@ -63,15 +79,19 @@ def _build_complete_hash(
     driver_wallet: str,
     chain_id: int,
 ) -> bytes:
-    from eth_utils import keccak, to_canonical_address
+    from eth_abi import encode as abi_encode
+    from eth_utils import keccak, to_checksum_address
 
-    packed = (
-        b"COMPLETE"
-        + on_chain_ride_id.to_bytes(32, byteorder="big")
-        + final_fare_wei.to_bytes(32, byteorder="big")
-        + to_canonical_address(rider_wallet)
-        + to_canonical_address(driver_wallet)
-        + chain_id.to_bytes(32, byteorder="big")
+    encoded = abi_encode(
+        ["string", "uint256", "uint256", "address", "address", "uint256"],
+        [
+            "COMPLETE",
+            on_chain_ride_id,
+            final_fare_wei,
+            to_checksum_address(rider_wallet),
+            to_checksum_address(driver_wallet),
+            chain_id,
+        ],
     )
-    return keccak(packed)
+    return keccak(encoded)
 

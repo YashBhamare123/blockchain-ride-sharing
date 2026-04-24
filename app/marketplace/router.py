@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from app.marketplace.schemas import (
+    DriverActiveRideResponse,
     OfferCreateRequest,
     OfferResponse,
     OffersListResponse,
@@ -53,6 +54,14 @@ async def open_rides(
     rides = await marketplace_service.list_open_rides(limit=limit, offset=offset)
     return OpenRidesResponse(rides=rides)
 
+@router.get("/driver-feed/active-ride", response_model=DriverActiveRideResponse)
+async def active_ride(
+    wallet: str = Depends(get_current_wallet),
+    marketplace_service: MarketplaceService = Depends(get_marketplace_service),
+) -> DriverActiveRideResponse:
+    ride = await marketplace_service.get_driver_active_ride(wallet)
+    return DriverActiveRideResponse(ride=ride)
+
 
 @router.post("/rides/{ride_id}/offers", response_model=OfferResponse)
 async def create_offer(
@@ -82,3 +91,30 @@ async def select_driver(
     marketplace_service: MarketplaceService = Depends(get_marketplace_service),
 ) -> RideResponse:
     return await marketplace_service.select_driver(ride_id, wallet, payload.offerId)
+
+
+@router.post("/rides/{ride_id}/complete", response_model=RideResponse)
+async def complete_ride(
+    ride_id: str,
+    wallet: str = Depends(get_current_wallet),
+    marketplace_service: MarketplaceService = Depends(get_marketplace_service),
+) -> RideResponse:
+    return await marketplace_service.complete_ride(ride_id, wallet)
+
+
+@router.post("/rides/{ride_id}/cancel", response_model=RideResponse)
+async def cancel_ride(
+    ride_id: str,
+    wallet: str = Depends(get_current_wallet),
+    marketplace_service: MarketplaceService = Depends(get_marketplace_service),
+) -> RideResponse:
+    return await marketplace_service.cancel_ride(ride_id, wallet)
+
+
+@router.post("/rides/{ride_id}/onchain-accept", response_model=RideResponse)
+async def onchain_accept(
+    ride_id: str,
+    wallet: str = Depends(get_current_wallet),
+    marketplace_service: MarketplaceService = Depends(get_marketplace_service),
+) -> RideResponse:
+    return await marketplace_service.onchain_accept(ride_id, wallet)

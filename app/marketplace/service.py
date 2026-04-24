@@ -5,6 +5,10 @@ from fastapi import HTTPException, status
 from app.db import Database
 from app.marketplace.schemas import OfferCreateRequest, OfferResponse, RideCreateRequest, RideResponse
 
+ACTIVE_DRIVER_RIDE_STATUSES = ("DRIVER_SELECTED", "ONCHAIN_ACCEPTED", "STARTED")
+COMPLETABLE_RIDE_STATUSES = ACTIVE_DRIVER_RIDE_STATUSES
+CANCELLABLE_STATUSES = ("OPEN", "DRIVER_SELECTED", "ONCHAIN_ACCEPTED", "STARTED")
+
 
 class MarketplaceService:
     def __init__(self, db: Database) -> None:
@@ -69,6 +73,25 @@ class MarketplaceService:
             )
         return [self._ride_from_row(row) for row in rows]
 
+    async def get_driver_active_ride(self, driver_wallet: str) -> RideResponse | None:
+        pool = self._require_pool()
+        driver_wallet = driver_wallet.lower()
+        async with pool.acquire() as connection:
+            row = await connection.fetchrow(
+                """
+                SELECT * FROM ride_requests
+                WHERE selected_driver_wallet = $1
+                  AND status = ANY($2::text[])
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                driver_wallet,
+                list(ACTIVE_DRIVER_RIDE_STATUSES),
+            )
+        if not row:
+            return None
+        return self._ride_from_row(row)
+
     async def create_offer(self, ride_id: str, driver_wallet: str, payload: OfferCreateRequest) -> OfferResponse:
         pool = self._require_pool()
         driver_wallet = driver_wallet.lower()
@@ -96,9 +119,10 @@ class MarketplaceService:
                 """
                 INSERT INTO driver_offers(
                     id, ride_request_id, driver_wallet,
-                    eta_seconds, quoted_fare_wei, message, status
+                    eta_seconds, quoted_fare_wei, message, status,
+                    driver_signature, driver_nonce, ceiling_enabled
                 )
-                VALUES($1,$2,$3,$4,$5,$6,'PENDING')
+                VALUES($1,$2,$3,$4,$5,$6,'PENDING',$7,$8,$9)
                 RETURNING *
                 """,
                 offer_id,
@@ -107,6 +131,9 @@ class MarketplaceService:
                 payload.etaSeconds,
                 payload.quotedFareWei,
                 payload.message,
+                payload.driverSignature,
+                payload.driverNonce,
+                payload.ceilingEnabled,
             )
         return self._offer_from_row(row)
 
@@ -172,6 +199,101 @@ class MarketplaceService:
                     RETURNING *
                     """,
                     offer["driver_wallet"],
+                    ride_id,
+                )
+        return self._ride_from_row(updated_ride)
+    async def complete_ride(self, ride_id: str, driver_wallet: str) -> RideResponse:
+        pool = self._require_pool()
+        driver_wallet = driver_wallet.lower()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                ride = await connection.fetchrow("SELECT * FROM ride_requests WHERE id = $1 FOR UPDATE", ride_id)
+                if not ride:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ride not found")
+
+                selected_driver = (ride["selected_driver_wallet"] or "").lower()
+                if not selected_driver:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ride has no selected driver")
+                if selected_driver != driver_wallet:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only selected driver can complete ride")
+                if ride["status"] == "COMPLETED":
+                    return self._ride_from_row(ride)
+                if ride["status"] not in COMPLETABLE_RIDE_STATUSES:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Ride cannot be completed in its current state",
+                    )
+
+                updated_ride = await connection.fetchrow(
+                    """
+                    UPDATE ride_requests
+                    SET status = 'COMPLETED',
+                        updated_at = NOW()
+                    WHERE id = $1
+                    RETURNING *
+                    """,
+                    ride_id,
+                )
+        return self._ride_from_row(updated_ride)
+
+    async def onchain_accept(self, ride_id: str, rider_wallet: str) -> RideResponse:
+        """Called by the rider after the acceptRide blockchain tx is confirmed."""
+        pool = self._require_pool()
+        rider_wallet = rider_wallet.lower()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                ride = await connection.fetchrow("SELECT * FROM ride_requests WHERE id = $1 FOR UPDATE", ride_id)
+                if not ride:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ride not found")
+                if ride["rider_wallet"] != rider_wallet:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the rider can confirm on-chain acceptance")
+                if ride["status"] == "ONCHAIN_ACCEPTED":
+                    return self._ride_from_row(ride)
+                if ride["status"] != "DRIVER_SELECTED":
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Ride must be DRIVER_SELECTED to confirm on-chain (current: {ride['status']})",
+                    )
+                updated_ride = await connection.fetchrow(
+                    """
+                    UPDATE ride_requests
+                    SET status = 'ONCHAIN_ACCEPTED',
+                        updated_at = NOW()
+                    WHERE id = $1
+                    RETURNING *
+                    """,
+                    ride_id,
+                )
+        return self._ride_from_row(updated_ride)
+
+    async def cancel_ride(self, ride_id: str, wallet: str) -> RideResponse:
+        pool = self._require_pool()
+        wallet = wallet.lower()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                ride = await connection.fetchrow("SELECT * FROM ride_requests WHERE id = $1 FOR UPDATE", ride_id)
+                if not ride:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ride not found")
+                if ride["status"] == "CANCELLED":
+                    return self._ride_from_row(ride)
+                if ride["status"] not in CANCELLABLE_STATUSES:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Ride cannot be cancelled in status '{ride['status']}'",
+                    )
+                is_rider = ride["rider_wallet"] == wallet
+                is_driver = (ride["selected_driver_wallet"] or "").lower() == wallet
+                if not is_rider and not is_driver:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorised to cancel this ride")
+
+                updated_ride = await connection.fetchrow(
+                    """
+                    UPDATE ride_requests
+                    SET status = 'CANCELLED',
+                        updated_at = NOW()
+                    WHERE id = $1
+                    RETURNING *
+                    """,
                     ride_id,
                 )
         return self._ride_from_row(updated_ride)

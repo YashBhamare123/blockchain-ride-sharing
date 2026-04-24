@@ -168,3 +168,110 @@ def test_only_ride_owner_can_select_driver() -> None:
             json={"offerId": offer_id},
         )
         assert forbidden_response.status_code == 403
+
+
+def test_selected_driver_can_complete_ride_and_active_feed_clears() -> None:
+    clean_tables()
+    rider = Account.create()
+    driver = Account.create()
+
+    with create_test_client() as client:
+        rider_token = make_token(client, rider)
+        driver_token = make_token(client, driver)
+
+        ride_response = client.post(
+            "/api/v1/rides",
+            headers={"Authorization": f"Bearer {rider_token}"},
+            json={
+                "pickupLat": 12.9716,
+                "pickupLng": 77.5946,
+                "pickupAddress": "A",
+                "dropLat": 12.9352,
+                "dropLng": 77.6245,
+                "dropAddress": "B",
+            },
+        )
+        ride_id = ride_response.json()["id"]
+
+        offer_response = client.post(
+            f"/api/v1/rides/{ride_id}/offers",
+            headers={"Authorization": f"Bearer {driver_token}"},
+            json={"etaSeconds": 450, "quotedFareWei": "800000000000000"},
+        )
+        offer_id = offer_response.json()["id"]
+
+        select_response = client.post(
+            f"/api/v1/rides/{ride_id}/select-driver",
+            headers={"Authorization": f"Bearer {rider_token}"},
+            json={"offerId": offer_id},
+        )
+        assert select_response.status_code == 200
+        assert select_response.json()["status"] == "DRIVER_SELECTED"
+
+        active_before = client.get(
+            "/api/v1/driver-feed/active-ride",
+            headers={"Authorization": f"Bearer {driver_token}"},
+        )
+        assert active_before.status_code == 200
+        assert active_before.json()["ride"]["id"] == ride_id
+        assert active_before.json()["ride"]["status"] == "DRIVER_SELECTED"
+
+        complete_response = client.post(
+            f"/api/v1/rides/{ride_id}/complete",
+            headers={"Authorization": f"Bearer {driver_token}"},
+        )
+        assert complete_response.status_code == 200
+        assert complete_response.json()["status"] == "COMPLETED"
+
+        active_after = client.get(
+            "/api/v1/driver-feed/active-ride",
+            headers={"Authorization": f"Bearer {driver_token}"},
+        )
+        assert active_after.status_code == 200
+        assert active_after.json()["ride"] is None
+
+
+def test_only_selected_driver_can_complete_ride() -> None:
+    clean_tables()
+    rider = Account.create()
+    selected_driver = Account.create()
+    other_driver = Account.create()
+
+    with create_test_client() as client:
+        rider_token = make_token(client, rider)
+        selected_driver_token = make_token(client, selected_driver)
+        other_driver_token = make_token(client, other_driver)
+
+        ride_response = client.post(
+            "/api/v1/rides",
+            headers={"Authorization": f"Bearer {rider_token}"},
+            json={
+                "pickupLat": 12.9716,
+                "pickupLng": 77.5946,
+                "pickupAddress": "A",
+                "dropLat": 12.9352,
+                "dropLng": 77.6245,
+                "dropAddress": "B",
+            },
+        )
+        ride_id = ride_response.json()["id"]
+
+        offer_response = client.post(
+            f"/api/v1/rides/{ride_id}/offers",
+            headers={"Authorization": f"Bearer {selected_driver_token}"},
+            json={"etaSeconds": 450, "quotedFareWei": "800000000000000"},
+        )
+        offer_id = offer_response.json()["id"]
+
+        select_response = client.post(
+            f"/api/v1/rides/{ride_id}/select-driver",
+            headers={"Authorization": f"Bearer {rider_token}"},
+            json={"offerId": offer_id},
+        )
+        assert select_response.status_code == 200
+
+        forbidden_response = client.post(
+            f"/api/v1/rides/{ride_id}/complete",
+            headers={"Authorization": f"Bearer {other_driver_token}"},
+        )
+        assert forbidden_response.status_code == 403

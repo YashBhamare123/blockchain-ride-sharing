@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.admin.router import router as admin_router
 from app.auth.router import router as auth_router
 from app.auth.service import AuthService
 from app.chain_sync.router import router as chain_sync_router
@@ -51,6 +52,7 @@ def create_app(init_db: bool = True) -> FastAPI:
         allow_headers=["*"],
     )
 
+    app.include_router(admin_router, prefix="/api/v1")
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(marketplace_router, prefix="/api/v1")
     app.include_router(maps_router, prefix="/api/v1")

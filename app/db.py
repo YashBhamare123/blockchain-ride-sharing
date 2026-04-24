@@ -88,6 +88,11 @@ class Database:
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
 
+                ALTER TABLE driver_offers
+                    ADD COLUMN IF NOT EXISTS driver_signature TEXT,
+                    ADD COLUMN IF NOT EXISTS driver_nonce TEXT,
+                    ADD COLUMN IF NOT EXISTS ceiling_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
                 CREATE TABLE IF NOT EXISTS ride_locations (
                     id BIGSERIAL PRIMARY KEY,
                     ride_request_id TEXT NOT NULL REFERENCES ride_requests(id) ON DELETE CASCADE,

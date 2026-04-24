@@ -38,11 +38,17 @@ class RideResponse(BaseModel):
 class OpenRidesResponse(BaseModel):
     rides: list[RideResponse]
 
+class DriverActiveRideResponse(BaseModel):
+    ride: RideResponse | None
+
 
 class OfferCreateRequest(BaseModel):
     etaSeconds: int = Field(ge=0)
     quotedFareWei: str
     message: str | None = None
+    driverSignature: str | None = None
+    driverNonce: str | None = None
+    ceilingEnabled: bool = False
 
 
 class OfferResponse(BaseModel):
